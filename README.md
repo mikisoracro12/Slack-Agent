@@ -2,14 +2,18 @@
 
 Python Slack bot built with **Bolt for Python** and **Socket Mode**. It watches every channel it is invited to and deletes messages **1 hour** after they are posted — unless the message starts with `!!!` (those are kept forever).
 
-Deletion uses a workspace **admin user token** (`xoxp-`), because a bot token cannot delete other users' messages.
+It also auto-deletes the installing admin's own **DM / MPIM** messages (via user event subscriptions on the `xoxp-` token).
+
+Deletion uses a workspace **admin user token** (`xoxp-`), because a bot token cannot delete other users' messages in channels, and only the message owner can delete in DMs.
 
 ## How it works
 
 | Message | Result |
 | --- | --- |
 | Starts with `!!!` (after leading whitespace) | Kept forever |
-| Any other human message (including thread replies) | Deleted after `DELETE_AFTER_SECONDS` (default 3600) |
+| Channel / private-channel human message (including thread replies) | Deleted after `DELETE_AFTER_SECONDS` (default 3600) |
+| DM / MPIM message from the admin user token owner | Deleted after the same delay |
+| DM / MPIM message from anyone else | Ignored (user token cannot delete them) |
 | Bot messages, edits, joins, deletes, other subtypes | Ignored |
 
 Pending deletions are stored in local SQLite (`pending.db`) so they survive restarts. A background thread checks every 60 seconds and also runs immediately on startup for overdue rows.
@@ -28,8 +32,11 @@ Pending deletions are stored in local SQLite (`pending.db`) so they survive rest
 
 - **Socket Mode** (no public URL / ngrok required)
 - **Bot scopes:** `channels:history`, `groups:history`, `chat:write`
-- **User scopes:** `chat:write`, `channels:history`, `groups:history`
+- **User scopes:** `chat:write`, `channels:history`, `groups:history`, `im:history`, `mpim:history`
 - **Bot events:** `message.channels`, `message.groups`
+- **User events:** `message.im`, `message.mpim`
+
+If you already installed an older version of the app, update the manifest in the Slack app settings (or re-paste scopes/events), then **Reinstall to Workspace** so the new user scopes and events take effect. Copy the refreshed `xoxp-` token into `.env` if Slack rotates it.
 
 ---
 

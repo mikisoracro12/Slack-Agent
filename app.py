@@ -1,6 +1,6 @@
 """
-Slack bot (Bolt + Socket Mode) that auto-deletes channel messages after a
-configurable delay, unless the message text starts with "!!!".
+Slack bot (Bolt + Socket Mode) that auto-deletes channel and DM messages after
+a configurable delay, unless the message text starts with "!!!".
 """
 
 from __future__ import annotations
@@ -30,6 +30,9 @@ DELETE_AFTER_SECONDS = int(os.environ.get("DELETE_AFTER_SECONDS", "3600"))
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pending.db")
 SCHEDULER_INTERVAL_SECONDS = 60
 
+# DM / multi-party IM channel types delivered via user event subscriptions.
+DM_CHANNEL_TYPES = frozenset({"im", "mpim"})
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -40,6 +43,15 @@ logger = logging.getLogger(__name__)
 # Bot listens with the bot token; deletions use a workspace admin user token.
 app = App(token=SLACK_BOT_TOKEN)
 admin_client = WebClient(token=SLACK_ADMIN_USER_TOKEN)
+
+# Resolve once: in DMs the user token can only delete this user's own messages.
+_auth = admin_client.auth_test()
+ADMIN_USER_ID: str = _auth["user_id"]
+logger.info(
+    "Admin user token owner user_id=%s team=%s",
+    ADMIN_USER_ID,
+    _auth.get("team"),
+)
 
 _db_lock = threading.Lock()
 
@@ -225,8 +237,12 @@ def handle_message(event: dict, logger: logging.Logger) -> None:
     """
     Schedule deletion for human messages that do not start with "!!!".
 
+    Channels/groups (bot events): any human message is scheduled.
+    DMs / MPIMs (user events message.im / message.mpim): only messages from
+    ADMIN_USER_ID are scheduled, since the user token can only delete those.
+
     Ignores bots, any message with a subtype (edits/joins/deletes/etc.),
-    and keep-forever messages. Thread replies are treated like channel messages.
+    and keep-forever messages. Thread replies are treated like normal messages.
     """
     # Bots (including this app) — skip
     if event.get("bot_id") or event.get("bot_profile"):
@@ -248,6 +264,17 @@ def handle_message(event: dict, logger: logging.Logger) -> None:
     channel_id = event["channel"]
     message_ts = event["ts"]
     user_id = event.get("user") or ""
+    channel_type = event.get("channel_type") or ""
+
+    # User-token DM events: only the admin user's own messages are deletable.
+    if channel_type in DM_CHANNEL_TYPES and user_id != ADMIN_USER_ID:
+        logger.debug(
+            "Skipping DM/MPIM from other user channel=%s type=%s user=%s",
+            channel_id,
+            channel_type,
+            user_id,
+        )
+        return
 
     # Slack message ts is an epoch float as a string (e.g. "1710000000.000100").
     posted_at = float(message_ts)
@@ -255,8 +282,9 @@ def handle_message(event: dict, logger: logging.Logger) -> None:
 
     schedule_deletion(channel_id, message_ts, user_id, delete_at)
     logger.info(
-        "Scheduled deletion channel=%s ts=%s user=%s delete_at=%s (in %ss)",
+        "Scheduled deletion channel=%s type=%s ts=%s user=%s delete_at=%s (in %ss)",
         channel_id,
+        channel_type or "unknown",
         message_ts,
         user_id,
         format_ts(delete_at),
@@ -270,8 +298,9 @@ def handle_message(event: dict, logger: logging.Logger) -> None:
 def main() -> None:
     init_db()
     logger.info(
-        "Starting bot; DELETE_AFTER_SECONDS=%s, db=%s",
+        "Starting bot; DELETE_AFTER_SECONDS=%s, admin_user=%s, db=%s",
         DELETE_AFTER_SECONDS,
+        ADMIN_USER_ID,
         DB_PATH,
     )
 

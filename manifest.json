@@ -1,7 +1,7 @@
 {
   "display_information": {
     "name": "Auto Delete Messages",
-    "description": "Deletes channel messages after a delay unless they start with !!!",
+    "description": "Deletes channel and DM messages after a delay unless they start with !!!",
     "background_color": "#2c2d30"
   },
   "features": {
@@ -20,7 +20,9 @@
       "user": [
         "chat:write",
         "channels:history",
-        "groups:history"
+        "groups:history",
+        "im:history",
+        "mpim:history"
       ]
     }
   },
@@ -29,6 +31,10 @@
       "bot_events": [
         "message.channels",
         "message.groups"
+      ],
+      "user_events": [
+        "message.im",
+        "message.mpim"
       ]
     },
     "interactivity": {
