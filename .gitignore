@@ -1,0 +1,21 @@
+# Secrets
+.env
+
+# Local SQLite state
+pending.db
+pending.db-*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
