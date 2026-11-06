@@ -1,9 +1,11 @@
 # Secrets
 .env
 
-# Local SQLite state
-pending.db
-pending.db-*
+# OAuth tokens and in-flight state
+installations.db
+installations.db-*
+oauth_states.db
+oauth_states.db-*
 
 # Python
 __pycache__/

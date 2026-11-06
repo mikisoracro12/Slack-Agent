@@ -1,177 +1,137 @@
-# Auto Delete Messages (Slack bot)
+# Remove Messages (Slack bot)
 
-Python Slack bot built with **Bolt for Python** and **Socket Mode**. It watches every channel it is invited to and deletes messages **1 hour** after they are posted — unless the message starts with `!!!` (those are kept forever).
+Python Slack app built with **Bolt for Python**. In any conversation, a user can run:
 
-It also auto-deletes the installing admin's own **DM / MPIM** messages (via user event subscriptions on the `xoxp-` token).
+```text
+/delete 3
+```
 
-Deletion uses a workspace **admin user token** (`xoxp-`), because a bot token cannot delete other users' messages in channels, and only the message owner can delete in DMs.
+That finds **their own** messages posted in the last 3 hours in **that** channel, private channel, DM, or group DM (including their thread replies) and, after they confirm, deletes them. Messages from other people are left alone.
 
-## How it works
+`/delete 0.5` is half an hour. The number must be greater than 0 and at most 720 (30 days). `/delete 3` at 15:00 covers messages from 12:00 through 15:00.
 
-| Message | Result |
-| --- | --- |
-| Starts with `!!!` (after leading whitespace) | Kept forever |
-| Channel / private-channel human message (including thread replies) | Deleted after `DELETE_AFTER_SECONDS` (default 3600) |
-| DM / MPIM message from the admin user token owner | Deleted after the same delay |
-| DM / MPIM message from anyone else | Ignored (user token cannot delete them) |
-| Bot messages, edits, joins, deletes, other subtypes | Ignored |
+The app runs as an HTTP server on **port 3000** (not Socket Mode). Each person authorizes once; their user token is stored in local SQLite (`installations.db`) and used to read and delete only their messages.
 
-Pending deletions are stored in local SQLite (`pending.db`) so they survive restarts. A background thread checks every 60 seconds and also runs immediately on startup for overdue rows.
+## 1. Create the Slack app
 
----
+1. Open [https://api.slack.com/apps](https://api.slack.com/apps).
+2. **Create New App** → **From an app manifest** → choose the workspace.
+3. Paste [`manifest.json`](manifest.json). The URLs still say `https://YOUR-PUBLIC-URL/...`. You will replace those after ngrok is running (step 4). If Slack refuses to save the manifest because it cannot verify those URLs, create the app with the placeholder, then update the three URLs in the UI in step 4.
+4. Create the app.
 
-## 1. Create the Slack app from the manifest
+### Scopes in the manifest
 
-1. Open [https://api.slack.com/apps](https://api.slack.com/apps) while signed into the target workspace.
-2. Click **Create New App** → **From an app manifest**.
-3. Pick your workspace → **Next**.
-4. Paste the contents of [`manifest.json`](manifest.json) (or upload the file) → **Next** → **Create**.
-5. Confirm the bot and user scopes look correct, then finish creation.
+- **Bot:** `commands`, `chat:write`
+- **User:** `chat:write`, `channels:history`, `groups:history`, `im:history`, `mpim:history`
 
-### What the manifest enables
+Socket Mode is off. There are no event subscriptions. Interactivity and the `/delete` command both post to `/slack/events`.
 
-- **Socket Mode** (no public URL / ngrok required)
-- **Bot scopes:** `channels:history`, `groups:history`, `chat:write`
-- **User scopes:** `chat:write`, `channels:history`, `groups:history`, `im:history`, `mpim:history`
-- **Bot events:** `message.channels`, `message.groups`
-- **User events:** `message.im`, `message.mpim`
+If you still have the older auto-delete app, do not reuse its bot or user tokens. This version uses OAuth client credentials instead.
 
-If you already installed an older version of the app, update the manifest in the Slack app settings (or re-paste scopes/events), then **Reinstall to Workspace** so the new user scopes and events take effect. Copy the refreshed `xoxp-` token into `.env` if Slack rotates it.
-
----
-
-## 2. Install the app and collect tokens
-
-### Install to the workspace
-
-1. In the app settings, open **OAuth & Permissions**.
-2. Click **Install to Workspace** (or **Reinstall to Workspace** if you change scopes later).
-3. Approve the bot **and** user scopes. The installing account should be a **workspace admin/owner** so `chat.delete` can remove other people's messages.
-
-### `SLACK_BOT_TOKEN` (`xoxb-`)
-
-1. **OAuth & Permissions**
-2. Under **Bot User OAuth Token**, copy the `xoxb-...` value.
-
-### `SLACK_ADMIN_USER_TOKEN` (`xoxp-`)
-
-1. Same page: **OAuth & Permissions**
-2. Under **User OAuth Token**, copy the `xoxp-...` value.
-3. This must belong to an admin who can delete others' messages in the channels you care about.
-
-### `SLACK_APP_TOKEN` (`xapp-`) — Socket Mode
-
-1. Open **Basic Information**.
-2. Scroll to **App-Level Tokens** → **Generate Token and Scopes**.
-3. Name it (e.g. `socket`) and add scope **`connections:write`**.
-4. Generate and copy the `xapp-...` token.
-
-### Enable Socket Mode (if needed)
-
-1. **Socket Mode** in the left sidebar.
-2. Ensure Socket Mode is **On** (the manifest already sets this).
-
----
-
-## 3. Local setup (Windows PowerShell)
-
-Open PowerShell in this project folder:
+## 2. Local setup (Windows PowerShell)
 
 ```powershell
 cd "D:\work miki\Slack App"
-```
-
-### Create and activate a virtual environment
-
-```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-```
-
-If PowerShell blocks the activate script:
-
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-.\.venv\Scripts\Activate.ps1
-```
-
-### Install dependencies
-
-```powershell
 pip install -r requirements.txt
-```
-
-### Create your `.env` file
-
-```powershell
 Copy-Item .env.example .env
 notepad .env
 ```
 
-Fill in the three tokens. For a quick test, set a short delay:
+If activation is blocked:
 
-```env
-SLACK_BOT_TOKEN=xoxb-...
-SLACK_APP_TOKEN=xapp-...
-SLACK_ADMIN_USER_TOKEN=xoxp-...
-DELETE_AFTER_SECONDS=60
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```
 
-When you are ready for production behavior, set `DELETE_AFTER_SECONDS=3600` (1 hour).
+Fill in `.env` from the app's **Basic Information** page:
 
----
+| Variable | Where |
+| --- | --- |
+| `SLACK_CLIENT_ID` | App Credentials → Client ID |
+| `SLACK_CLIENT_SECRET` | App Credentials → Client Secret |
+| `SLACK_SIGNING_SECRET` | App Credentials → Signing Secret |
+| `PUBLIC_BASE_URL` | Your ngrok HTTPS URL, no trailing slash. Set this in step 4, then restart the bot. |
 
-## 4. Invite the bot to channels
+Leave `PUBLIC_BASE_URL` as a placeholder until ngrok is up, but the process will not start until it is a real value. You can start ngrok first, paste the URL into `.env`, then start the bot.
 
-The bot only receives messages from channels it has joined.
+## 3. Run the bot
 
-In each public or private channel:
-
-```text
-/invite @Auto Delete
-```
-
-(Use the bot display name from the Slack app if you renamed it.)
-
-Private channels also need the admin user who authorized the user token to be a member if Slack requires that for deletion.
-
----
-
-## 5. Run the bot
-
-With the venv activated:
+With the virtual environment activated:
 
 ```powershell
 python app.py
 ```
 
-You should see a startup log with `DELETE_AFTER_SECONDS` and the path to `pending.db`. Leave this process running.
+The server listens on `http://0.0.0.0:3000`:
 
-### Quick test
+- `POST /slack/events` — slash command and buttons
+- `GET /slack/install` — start user authorization
+- `GET /slack/oauth_redirect` — OAuth callback
 
-1. Set `DELETE_AFTER_SECONDS=60` and restart the bot.
-2. Post a normal message in a channel where the bot is present → after ~60s it should disappear; the console logs the schedule and the delete.
-3. Post `!!! keep this` → it should never be deleted.
+Leave this window open.
 
----
+## 4. Expose it with ngrok
 
-## 6. Ops notes
+Install ngrok once ([https://ngrok.com/download](https://ngrok.com/download) or `winget install ngrok.ngrok`), add your authtoken, then in a second PowerShell window:
 
-- **`pending.db`** is created next to `app.py`. It is gitignored. Do not delete it while the bot is running if you care about in-flight schedules.
-- On restart, overdue rows are processed immediately, then every 60 seconds.
-- If Slack returns `message_not_found`, the row is dropped (message already gone).
-- If Slack returns `ratelimited`, the row stays and is retried on a later tick.
-- Other `chat.delete` errors are logged; the process keeps running.
+```powershell
+ngrok http 3000
+```
 
----
+Copy the **https** forwarding URL, for example `https://abcd-123.ngrok-free.app`.
+
+1. Put that origin in `.env` as `PUBLIC_BASE_URL` (no path, no trailing slash) and restart `python app.py`.
+2. In the Slack app settings, set the same origin on all three URLs:
+   - **Slash Commands** → `/delete` → Request URL: `https://abcd-123.ngrok-free.app/slack/events`
+   - **Interactivity & Shortcuts** → Request URL: `https://abcd-123.ngrok-free.app/slack/events`
+   - **OAuth & Permissions** → Redirect URLs: `https://abcd-123.ngrok-free.app/slack/oauth_redirect`
+
+The bot must be running when you save those URLs so Slack can verify them.
+
+A free ngrok URL changes every time you restart ngrok. Update `.env` and the three Slack URLs when it changes.
+
+## 5. Install the app
+
+1. **OAuth & Permissions** → **Install to Workspace** → **Allow**.
+2. That stores a bot token and **your** user token in `installations.db`.
+3. You can run `/delete` immediately. No `/invite` is required: the command uses your user token, not the bot's membership.
+
+## 6. Each person authorizes once
+
+Only the person who installed the app has a user token. Anyone else who runs `/delete` gets an ephemeral **Authorize** button pointing at:
+
+```text
+https://abcd-123.ngrok-free.app/slack/install
+```
+
+They open it while logged into Slack, click **Allow**, then run `/delete` again. Their user token is stored separately. The app can delete only that person's own messages.
+
+If Slack later returns `invalid_auth` or `token_revoked`, the stored installation is deleted and the user is asked to authorize again.
+
+## 7. Use `/delete`
+
+In a channel, private channel, DM, or group DM:
+
+```text
+/delete 3
+```
+
+1. The app lists your messages in that conversation from the last 3 hours, including replies in threads whose parent message is also inside that window.
+2. You get an ephemeral prompt: `Found N messages from the last 3 hours. Delete them?`
+3. **Delete** removes them with your user token. **Cancel** leaves them in place.
+
+Messages that start with nothing special are included. This bot no longer keeps or auto-deletes based on a `!!!` prefix.
 
 ## Project layout
 
 ```text
-app.py              # Bolt app, SQLite store, deletion scheduler
-requirements.txt    # slack_bolt, slack_sdk, python-dotenv
-manifest.json       # Slack app manifest (import in api.slack.com)
-.env.example        # Token / config template
-.gitignore          # Ignores .env, pending.db, venv, etc.
-README.md           # This file
+app.py              # Bolt app, OAuth, /delete, Flask server
+requirements.txt    # slack_bolt, slack_sdk, python-dotenv, flask
+manifest.json       # Slack app manifest (HTTP mode, /delete)
+.env.example        # Client id, secret, signing secret, public URL
+.gitignore          # Ignores .env and the SQLite OAuth databases
 ```
+
+`installations.db` and `oauth_states.db` are created next to `app.py` and are gitignored.
